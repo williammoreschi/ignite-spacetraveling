@@ -7,15 +7,22 @@ import { RichText } from 'prismic-dom';
 import Prismic from '@prismicio/client';
 
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { getPrismicClient } from '../../services/prismic';
 
 import commonStyles from '../../styles/common.module.scss';
 import styles from './post.module.scss';
 
 import Header from '../../components/Header';
+import Utteranc from '../../components/Utteranc';
 
 interface Post {
   first_publication_date: string | null;
+  last_publication_date: string | null;
+  prevSlug: string | null;
+  prevTitle: string | null;
+  nextSlug: string | null;
+  nextTitle: string | null;
   data: {
     title: string;
     banner: {
@@ -33,16 +40,15 @@ interface Post {
 
 interface PostProps {
   post: Post;
+  preview: boolean;
 }
 
-// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export default function Post({ post }: PostProps) {
+export default function Post({ post, preview }: PostProps): JSX.Element {
   const router = useRouter();
 
   const readingTime = Math.ceil(
     post.data.content.reduce((total, contentItem) => {
-      const heading = contentItem.heading.split(' ');
+      const heading = String(contentItem.heading).split(' ');
       const body = RichText.asText(contentItem.body).split(' ');
       return total + (body.length + heading.length);
     }, 0) / 200
@@ -81,19 +87,76 @@ export default function Post({ post }: PostProps) {
                 {readingTime} min
               </span>
             </span>
+            <span>
+              * editado em{' '}
+              {format(
+                new Date(post.first_publication_date),
+                "d MMM yyyy, 'ás' HH:mm",
+                {
+                  locale: ptBR,
+                }
+              )}
+            </span>
           </header>
           <section className={styles.postContent}>
             {post.data.content.map((c, i) => (
-              <Fragment key={i}>
+              <Fragment key={String(i)}>
                 <h1>{c.heading}</h1>
                 <div
-                  dangerouslySetInnerHTML={{
-                    __html: RichText.asHtml(c.body),
-                  }}
+                  // eslint-disable-next-line react/no-danger
+                  dangerouslySetInnerHTML={{ __html: RichText.asHtml(c.body) }}
                 />
               </Fragment>
             ))}
           </section>
+          <hr className={styles.hr} />
+          <nav className={styles.navContainer}>
+            <div>
+              <p>{post.prevTitle}</p>
+
+              {!post.prevSlug ? (
+                ''
+              ) : (
+                <Link href={`/post/${post.prevSlug}`}>
+                  <a>
+                    <button type="button" className={styles.nextPage}>
+                      Post anterior
+                    </button>
+                  </a>
+                </Link>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+              }}
+            >
+              <p>{post.nextTitle}</p>
+
+              {!post.nextSlug ? (
+                ''
+              ) : (
+                <Link href={`/post/${post.nextSlug}`}>
+                  <a>
+                    <button type="button" className={styles.nextPage}>
+                      Próximo post
+                    </button>
+                  </a>
+                </Link>
+              )}
+            </div>
+          </nav>
+          <Utteranc />
+          {preview && (
+            <aside>
+              <Link href="/api/exit-preview">
+                <a>Sair do modo Preview</a>
+              </Link>
+            </aside>
+          )}
         </article>
       </main>
     </>
@@ -120,14 +183,43 @@ export const getStaticPaths: GetStaticPaths = async () => {
   };
 };
 
-export const getStaticProps: GetStaticProps = async ({ params }) => {
+export const getStaticProps: GetStaticProps = async ({
+  params,
+  preview = false,
+  previewData,
+}) => {
   const { slug } = params;
   const prismic = getPrismicClient();
-  const response = await prismic.getByUID('post', String(slug), {});
+  const response = await prismic.getByUID('post', String(slug), {
+    ref: previewData?.ref ?? null,
+  });
+
+  const prevpost = (
+    await prismic.query(Prismic.predicates.at('document.type', 'post'), {
+      fetch: ['post.title'],
+      pageSize: 1,
+      after: response.id,
+      orderings: '[document.first_publication_date]',
+    })
+  ).results[0];
+
+  const nextpost = (
+    await prismic.query(Prismic.predicates.at('document.type', 'post'), {
+      fetch: ['post.title'],
+      pageSize: 1,
+      after: response.id,
+      orderings: '[document.first_publication_date desc]',
+    })
+  ).results[0];
 
   const post = {
     uid: response.uid,
     first_publication_date: response.first_publication_date,
+    last_publication_date: response.last_publication_date,
+    prevSlug: !prevpost ? null : prevpost.uid,
+    prevTitle: !prevpost ? null : prevpost.data.title,
+    nextSlug: !nextpost ? null : nextpost.uid,
+    nextTitle: !nextpost ? null : nextpost.data.title,
     data: {
       author: response.data.author,
       title: response.data.title,
@@ -144,6 +236,7 @@ export const getStaticProps: GetStaticProps = async ({ params }) => {
   return {
     props: {
       post,
+      preview,
     },
     redirect: 60 * 30, // 30 minutes
   };
